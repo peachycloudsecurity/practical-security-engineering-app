@@ -39,7 +39,7 @@ def push_scan_results(
     environment,
     verify_tls=False,
 ):
-    base_url = f"https://{dd_host}/api/v2"
+    base_url = f"http://{dd_host}/api/v2"
     import_url = f"{base_url}/import-scan/"
 
     headers = {"Authorization": f"Token {token}"}

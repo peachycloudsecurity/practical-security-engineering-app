@@ -56,24 +56,14 @@ if [ ! -d "$LAB_DIR/defectdojo" ]; then
         "$LAB_DIR/defectdojo"
 fi
 
-# Write a docker-compose override to remap nginx from 80/8080 → DD_PORT
-cat > "$LAB_DIR/defectdojo/docker-compose.override.yml" <<EOF
-services:
-  nginx:
-    ports:
-      - "${DD_PORT}:8080"
+# DefectDojo's compose reads DD_PORT from .env (defaults to 8080).
+# Writing .env overrides the port without touching any YAML files.
+cat > "$LAB_DIR/defectdojo/.env" <<EOF
+DD_PORT=${DD_PORT}
 EOF
 
-# Patch the base compose so it doesn't also bind 8080 (would conflict with Jenkins)
-# Replace any existing 8080 or 80 host port binding in nginx service
-sed -i.bak \
-    -e '/^\s*- "8080:8080"/d' \
-    -e '/^\s*- "80:8080"/d' \
-    "$LAB_DIR/defectdojo/docker-compose.yml" 2>/dev/null || true
-
 cd "$LAB_DIR/defectdojo"
-docker compose -f docker-compose.yml -f docker-compose.override.yml up -d \
-    --remove-orphans 2>&1 | tail -10
+docker compose up -d --remove-orphans 2>&1 | tail -10
 cd - > /dev/null
 
 # -------------------------------------------------------------------

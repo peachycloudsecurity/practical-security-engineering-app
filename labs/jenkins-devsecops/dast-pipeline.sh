@@ -10,10 +10,6 @@ VULN_APP_IMAGE="peachycloudsecurity/vulnerable-python-app:latest"
 TARGET_URL="http://localhost:${VULN_APP_PORT}"
 ZAP_IMAGE="ghcr.io/zaproxy/zaproxy:stable"
 
-JSON_OUT="$WORKSPACE/zap-results.json"
-XML_OUT="$WORKSPACE/zap-results.xml"
-HTML_OUT="$WORKSPACE/zap-results.html"
-
 echo "--- Pulling vulnerable app image ---"
 docker pull "$VULN_APP_IMAGE" || true
 
