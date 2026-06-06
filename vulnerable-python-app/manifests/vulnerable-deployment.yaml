@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vulnerable-python-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vulnerable-python
+  template:
+    metadata:
+      labels:
+        app: vulnerable-python
+    spec:
+      containers:
+      - name: python-app
+        image: peachycloudsecurity/vulnerable-python-app:latest
+        ports:
+        - containerPort: 8080
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8080
+          initialDelaySeconds: 5
+        securityContext:
+          privileged: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vulnerable-python-svc
+spec:
+  type: NodePort
+  selector:
+    app: vulnerable-python
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
+      nodePort: 30081

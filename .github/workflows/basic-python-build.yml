@@ -1,0 +1,21 @@
+name: Peachycloud Basic Python build
+
+on: [push]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        working-directory: vulnerable-python-app/webapp
+        run: pip install -r requirements.txt
+      - name: Build Docker image
+        working-directory: vulnerable-python-app
+        run: docker build -t basic-python-app .

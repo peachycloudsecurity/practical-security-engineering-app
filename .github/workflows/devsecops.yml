@@ -1,0 +1,398 @@
+name: Full DevSecOps Pipeline — Lab
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+defaults:
+  run:
+    working-directory: labs/github-actions-devsecops
+
+jobs:
+
+  # ── Layer 1: Secrets ────────────────────────────────────────────────────────
+  # Two tools intentionally — different detection strategies:
+  # Gitleaks: pattern match, catches hardcoded/test keys (will flag lab's fake AWS key)
+  # TruffleHog: verifies credentials are live against the real service (lab key won't verify → passes)
+  # In a real pipeline both run because pattern scanners have false positives and
+  # TruffleHog's verification confirms actual exposure.
+
+  gitleaks:
+    name: "Secrets — Gitleaks (pattern match)"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Scan for hardcoded secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif
+          category: lab-gitleaks
+        continue-on-error: true
+
+  trufflehog:
+    name: "Secrets — TruffleHog (verified live)"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install TruffleHog
+        run: curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin
+      - name: Scan and emit JSON
+        run: trufflehog git file://. --only-verified --json > trufflehog.json 2>/dev/null || true
+      - name: Convert to SARIF
+        run: |
+          python3 - <<'EOF'
+          import json
+          results, rules = [], {}
+          try:
+              with open("trufflehog.json") as f:
+                  for line in f:
+                      line = line.strip()
+                      if not line:
+                          continue
+                      finding = json.loads(line)
+                      det = finding.get("DetectorName", "secret")
+                      rules[det] = {"id": det, "name": det, "shortDescription": {"text": f"Verified live secret: {det}"}}
+                      src = finding.get("SourceMetadata", {}).get("Data", {}).get("Git", {})
+                      uri = src.get("file", "unknown")
+                      line_no = src.get("line", 1)
+                      results.append({
+                          "ruleId": det,
+                          "level": "error",
+                          "message": {"text": f"Verified live {det} credential detected in {uri}"},
+                          "locations": [{"physicalLocation": {"artifactLocation": {"uri": uri}, "region": {"startLine": line_no}}}]
+                      })
+          except Exception:
+              pass
+          sarif = {"version": "2.1.0", "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+                   "runs": [{"tool": {"driver": {"name": "TruffleHog", "rules": list(rules.values())}}, "results": results}]}
+          with open("trufflehog.sarif", "w") as f:
+              json.dump(sarif, f)
+          EOF
+      - name: Upload SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: labs/github-actions-devsecops/trufflehog.sarif
+          category: lab-trufflehog
+        continue-on-error: true
+
+  # ── Layer 2: SAST ───────────────────────────────────────────────────────────
+  # Three tools intentionally — each catches different classes of bugs:
+  # bandit: Python-specific insecure patterns (subprocess shell=True, hardcoded secrets)
+  # OpenGrep: regex + AST rules, OWASP ruleset, custom injection patterns
+  # CodeQL: semantic/dataflow analysis — tracks tainted input across function calls
+  # Real pipelines stack these because fast pattern tools (bandit/OpenGrep) run in seconds;
+  # CodeQL catches multi-hop flows they miss.
+
+  pip-audit:
+    name: "SAST — pip-audit (Python dependency CVEs)"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pip-audit
+        run: pip install pip-audit
+      - name: Audit dependencies
+        working-directory: labs/github-actions-devsecops
+        run: |
+          pip install -r requirements.txt --quiet
+          pip-audit -r requirements.txt -f json -o pip-audit.json || true
+      - name: Convert to SARIF
+        working-directory: labs/github-actions-devsecops
+        run: |
+          python3 - <<'EOF'
+          import json, sys
+          with open("pip-audit.json") as f:
+              data = json.load(f)
+          results = []
+          rules = {}
+          for dep in data.get("dependencies", []):
+              for vuln in dep.get("vulns", []):
+                  rid = vuln["id"]
+                  rules[rid] = {"id": rid, "name": rid, "shortDescription": {"text": vuln.get("description", rid)}}
+                  results.append({
+                      "ruleId": rid,
+                      "message": {"text": f"{dep['name']}=={dep['version']}: {vuln.get('description', '')}"},
+                      "locations": [{"physicalLocation": {"artifactLocation": {"uri": "requirements.txt"}}}]
+                  })
+          sarif = {"version": "2.1.0", "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+                   "runs": [{"tool": {"driver": {"name": "pip-audit", "rules": list(rules.values())}}, "results": results}]}
+          with open("pip-audit.sarif", "w") as f:
+              json.dump(sarif, f)
+          EOF
+      - name: Upload SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: labs/github-actions-devsecops/pip-audit.sarif
+          category: lab-pip-audit
+        continue-on-error: true
+
+  bandit:
+    name: "SAST — bandit (Python static analysis)"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install bandit
+        run: pip install bandit bandit-sarif-formatter
+      - name: Run bandit
+        working-directory: labs/github-actions-devsecops
+        run: bandit -r . -f sarif -o bandit.sarif || true
+      - name: Upload SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: labs/github-actions-devsecops/bandit.sarif
+          category: lab-bandit
+        continue-on-error: true
+
+  opengrep:
+    name: "SAST — OpenGrep (pattern + OWASP rules)"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install OpenGrep
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/opengrep/opengrep/main/install.sh | bash -s -- -v v1.16.0
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Run scan
+        working-directory: labs/github-actions-devsecops
+        run: |
+          opengrep scan \
+            --config p/security-audit \
+            --config p/secrets \
+            --config p/owasp-top-ten \
+            --sarif-output opengrep.sarif \
+            . || true
+      - name: Upload SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: labs/github-actions-devsecops/opengrep.sarif
+          category: lab-opengrep
+        continue-on-error: true
+
+  codeql:
+    name: "SAST — CodeQL (semantic analysis)"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: python
+          build-mode: none
+          queries: security-and-quality
+      - name: Analyze
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: lab-codeql
+
+  # ── Layer 3: Dependency Audit ───────────────────────────────────────────────
+  # Three tools intentionally:
+  # pip-audit: queries PyPI advisory DB directly, fastest for Python requirements
+  # Trivy FS: broader coverage — OS packages, lock files, IaC secrets in one pass
+  # Grype: SBOM-aware, generates a software inventory before scanning — catches
+  #        transitive deps that pip-audit and Trivy sometimes miss at different DB update cadences.
+
+  trivy-fs:
+    name: "Dependencies — Trivy FS (CVEs in packages)"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan filesystem
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: 'labs/github-actions-devsecops'
+          format: 'sarif'
+          output: 'trivy-fs.sarif'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '0'
+      - name: Upload SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-fs.sarif
+          category: lab-trivy-fs
+        continue-on-error: true
+      - name: Fail on CRITICAL/HIGH
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: 'labs/github-actions-devsecops'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'
+
+  grype:
+    name: "Dependencies — Grype (SBOM-aware CVE scan)"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Grype
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh \
+            | sh -s -- -b /usr/local/bin
+      - name: Scan and emit SARIF
+        working-directory: labs/github-actions-devsecops
+        run: grype dir:. -o sarif --file grype.sarif --fail-on high || true
+      - name: Upload SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: labs/github-actions-devsecops/grype.sarif
+          category: lab-grype
+        continue-on-error: true
+      - name: Fail on high+ findings
+        working-directory: labs/github-actions-devsecops
+        run: grype dir:. --fail-on high
+
+  # ── Layer 4: Container ──────────────────────────────────────────────────────
+
+  trivy-image:
+    name: "Container — Trivy Image (OS + app CVEs)"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        working-directory: labs/github-actions-devsecops
+        run: docker build -t lab-app:${{ github.sha }} .
+      - name: Scan image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'lab-app:${{ github.sha }}'
+          format: 'sarif'
+          output: 'trivy-image.sarif'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '0'
+      - name: Upload SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-image.sarif
+          category: lab-trivy-image
+        continue-on-error: true
+      - name: Fail on CRITICAL/HIGH
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'lab-app:${{ github.sha }}'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'
+
+  # ── Layer 5: IaC ────────────────────────────────────────────────────────────
+
+  checkov:
+    name: "IaC — Checkov (Terraform misconfigurations)"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Checkov
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: labs/github-actions-devsecops/infrastructure
+          framework: terraform
+          output_format: sarif
+          output_file_path: checkov.sarif
+          soft_fail: true
+      - name: Upload SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: checkov.sarif
+          category: lab-checkov
+        continue-on-error: true
+
+  # ── Layer 6: License ────────────────────────────────────────────────────────
+
+  license-check:
+    name: "Licenses — pip-licenses (policy enforcement)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for GPL licenses
+        working-directory: labs/github-actions-devsecops
+        run: |
+          pip install pip-licenses
+          pip install -r requirements.txt --quiet
+          pip-licenses --summary
+          pip-licenses --fail-on GPL || echo "GPL license detected — review required"
+
+  # ── Summary ─────────────────────────────────────────────────────────────────
+
+  pipeline-summary:
+    name: "Pipeline Summary"
+    needs:
+      - gitleaks
+      - trufflehog
+      - pip-audit
+      - bandit
+      - opengrep
+      - codeql
+      - trivy-fs
+      - grype
+      - trivy-image
+      - checkov
+      - license-check
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write summary table
+        run: |
+          echo "## DevSecOps Lab — Pipeline Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Layer | Tool | Result |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| Secrets | Gitleaks | ${{ needs.gitleaks.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Secrets | TruffleHog | ${{ needs.trufflehog.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Dependencies | pip-audit | ${{ needs.pip-audit.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| SAST | bandit | ${{ needs.bandit.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| SAST | OpenGrep | ${{ needs.opengrep.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| SAST | CodeQL | ${{ needs.codeql.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Dependencies | Trivy FS | ${{ needs.trivy-fs.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Dependencies | Grype | ${{ needs.grype.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Container | Trivy Image | ${{ needs.trivy-image.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| IaC | Checkov | ${{ needs.checkov.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Licenses | pip-licenses | ${{ needs.license-check.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "SARIF findings → **Security → Code scanning** tab." >> $GITHUB_STEP_SUMMARY

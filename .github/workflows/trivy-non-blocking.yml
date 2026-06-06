@@ -1,0 +1,60 @@
+name: Peachycloud Security Trivy non-blocking (SARIF upload)
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  security-events: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  trivy_non_blocking:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Build Local Docker Image
+        run: |
+          cd vulnerable-python-app
+          docker build -t devsecops-python-app:${{ github.sha }} .
+
+      - name: Run Trivy (SARIF, do not fail job)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: devsecops-python-app:${{ github.sha }}
+          format: sarif
+          output: trivy-results.sarif
+          exit-code: "0"
+          severity: CRITICAL,HIGH,MEDIUM,LOW
+
+      - name: Upload SARIF to GitHub Code Scanning
+        if: github.event.repository.fork == false
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-container
+        continue-on-error: true
+
+      - name: Run Trivy (table for PR comment)
+        if: github.event_name == 'pull_request'
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: devsecops-python-app:${{ github.sha }}
+          format: table
+          output: trivy-table.txt
+          exit-code: "0"
+          severity: CRITICAL,HIGH,MEDIUM,LOW
+
+      - name: Post or update PR comment with Trivy table
+        # Fork PRs get a read-only token: skip comment (SARIF step may still be limited).
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: trivy-container-scan
+          path: trivy-table.txt
+          recreate: true
