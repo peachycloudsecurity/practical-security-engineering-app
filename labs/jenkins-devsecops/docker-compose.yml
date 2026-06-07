@@ -11,30 +11,28 @@ services:
     volumes:
       - jenkins_data:/var/jenkins_home
       - /var/run/docker.sock:/var/run/docker.sock
+    group_add:
+      - "0"
     networks:
       - lab-net
 
-  gitlab:
-    image: gitlab/gitlab-ce:17.11.1-ce.0
-    container_name: lab-gitlab
+  gitea:
+    image: gitea/gitea:latest
+    container_name: lab-gitea
     restart: unless-stopped
     ports:
-      - "8929:80"
-      - "2289:22"
+      - "3100:3000"
+      - "2222:22"
     environment:
-      GITLAB_OMNIBUS_CONFIG: |
-        external_url 'http://localhost:8929'
-        gitlab_rails['initial_root_password'] = 'superman'
-        gitlab_rails['gitlab_signup_enabled'] = false
-        gitlab_rails['allow_local_requests_from_web_hooks_and_services'] = true
-        nginx['listen_port'] = 80
+      - GITEA__server__ROOT_URL=http://localhost:3100
+      - GITEA__server__HTTP_PORT=3000
+      - GITEA__security__INSTALL_LOCK=true
+      - GITEA__service__DISABLE_REGISTRATION=false
+      - GITEA__webhook__ALLOWED_HOST_LIST=*
     volumes:
-      - gitlab_config:/etc/gitlab
-      - gitlab_logs:/var/log/gitlab
-      - gitlab_data:/var/opt/gitlab
+      - gitea_data:/data
     networks:
       - lab-net
-    shm_size: 256m
 
 networks:
   lab-net:
@@ -42,6 +40,4 @@ networks:
 
 volumes:
   jenkins_data:
-  gitlab_config:
-  gitlab_logs:
-  gitlab_data:
+  gitea_data:

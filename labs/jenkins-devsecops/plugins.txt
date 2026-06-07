@@ -1,3 +1,3 @@
 git
-gitlab-plugin
+generic-webhook-trigger
 htmlpublisher
