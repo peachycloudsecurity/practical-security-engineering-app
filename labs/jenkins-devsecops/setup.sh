@@ -374,15 +374,39 @@ log "Gitea webhook created — id=$HOOK_ID → http://${JENKINS_IP}:8080/generic
 # -------------------------------------------------------------------------
 log "Setting up DefectDojo on port $DD_PORT..."
 if [ ! -d "$LAB_DIR/defectdojo" ]; then
+    log "Cloning DefectDojo repo (depth=1)..."
     git clone --depth=1 https://github.com/DefectDojo/django-DefectDojo \
         "$LAB_DIR/defectdojo"
+    log "Clone complete"
+else
+    log "DefectDojo repo already present at $LAB_DIR/defectdojo — skipping clone"
 fi
+
+log "Writing DefectDojo .env (port=$DD_PORT, password=superman)..."
 cat > "$LAB_DIR/defectdojo/.env" << EOF
 DD_PORT=${DD_PORT}
 DD_ADMIN_PASSWORD=superman
 EOF
+
+log "Starting DefectDojo containers (this takes 2-3 min on first run)..."
 cd "$LAB_DIR/defectdojo"
-docker compose up -d --remove-orphans 2>&1 | tail -5
+docker compose up -d --remove-orphans 2>&1
+log "DefectDojo containers started:"
+docker compose ps --format "table {{.Name}}\t{{.Status}}" 2>/dev/null || docker ps --filter "name=defectdojo" --format "table {{.Names}}\t{{.Status}}"
+
+log "Waiting for DefectDojo to become ready (port $DD_PORT)..."
+DD_RETRIES=0
+until curl -s -o /dev/null -w "%{http_code}" "http://localhost:${DD_PORT}" | grep -qE "200|302"; do
+    DD_RETRIES=$((DD_RETRIES + 1))
+    if [ "$DD_RETRIES" -ge 36 ]; then
+        log "WARNING: DefectDojo not responding after 3 min — check: docker compose -f $LAB_DIR/defectdojo/docker-compose.yml logs"
+        break
+    fi
+    printf "."
+    sleep 5
+done
+echo ""
+log "DefectDojo ready at http://localhost:${DD_PORT} (admin / superman)"
 cd "$SCRIPT_DIR"
 
 # -------------------------------------------------------------------------
@@ -394,10 +418,7 @@ HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
     -u "$JENKINS_USER:$JENKINS_API_TOKEN")
 log "Build queued: HTTP $HTTP"
 
-# Get DefectDojo password
-DD_PASS=$(cd "$LAB_DIR/defectdojo" && \
-    docker compose logs initializer 2>/dev/null | grep -i "admin password" | tail -1 \
-    || echo "(run: cd $LAB_DIR/defectdojo && docker compose logs initializer | grep -i password)")
+DD_PASS="superman"
 
 # -------------------------------------------------------------------------
 # Summary
