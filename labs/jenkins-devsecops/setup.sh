@@ -76,6 +76,10 @@ cd "$SCRIPT_DIR"
 docker compose build 2>&1 | tail -5
 docker compose up -d
 
+log "Fixing docker socket permissions for Jenkins..."
+sleep 3
+docker exec -u root lab-jenkins chmod 666 /var/run/docker.sock
+
 # -------------------------------------------------------------------------
 # Wait for Jenkins
 # -------------------------------------------------------------------------
