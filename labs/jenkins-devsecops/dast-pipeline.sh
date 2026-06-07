@@ -35,16 +35,16 @@ docker run \
     "$ZAP_IMAGE" \
     zap-baseline.py \
     -t "$TARGET_URL" \
-    -J /zap/wrk/zap-results.json \
-    -x /zap/wrk/zap-results.xml \
-    -r /zap/wrk/zap-results.html \
+    -J /tmp/zap-results.json \
+    -x /tmp/zap-results.xml \
+    -r /tmp/zap-results.html \
     -I || true
 # -I: do not fail on warnings (keep pipeline green for observation)
 
 echo "--- Copying ZAP output into workspace ---"
-docker cp lab-zap-run:/zap/wrk/zap-results.json "$WORKSPACE"/ || true
-docker cp lab-zap-run:/zap/wrk/zap-results.xml  "$WORKSPACE"/ || true
-docker cp lab-zap-run:/zap/wrk/zap-results.html "$WORKSPACE"/ || true
+docker cp lab-zap-run:/tmp/zap-results.json "$WORKSPACE"/ || true
+docker cp lab-zap-run:/tmp/zap-results.xml  "$WORKSPACE"/ || true
+docker cp lab-zap-run:/tmp/zap-results.html "$WORKSPACE"/ || true
 docker rm lab-zap-run 2>/dev/null || true
 
 echo "--- ZAP scan complete ---"
