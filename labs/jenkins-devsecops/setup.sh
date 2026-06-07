@@ -9,7 +9,7 @@
 # Credentials after setup:
 #   Jenkins    : admin / superman  (http://localhost:8090)
 #   Gitea      : admin / superman  (http://localhost:3100)
-#   DefectDojo : admin / see end of output (http://localhost:8181)
+#   DefectDojo : admin / <printed at end>  (http://localhost:8181)
 
 set -euo pipefail
 
@@ -377,36 +377,37 @@ if [ ! -d "$LAB_DIR/defectdojo" ]; then
     log "Cloning DefectDojo repo (depth=1)..."
     git clone --depth=1 https://github.com/DefectDojo/django-DefectDojo \
         "$LAB_DIR/defectdojo"
-    log "Clone complete"
 else
-    log "DefectDojo repo already present at $LAB_DIR/defectdojo — skipping clone"
+    log "DefectDojo repo already at $LAB_DIR/defectdojo"
 fi
-
-log "Writing DefectDojo .env (port=$DD_PORT, password=superman)..."
 cat > "$LAB_DIR/defectdojo/.env" << EOF
 DD_PORT=${DD_PORT}
-DD_ADMIN_PASSWORD=superman
 EOF
-
-log "Starting DefectDojo containers (this takes 2-3 min on first run)..."
 cd "$LAB_DIR/defectdojo"
-docker compose up -d --remove-orphans 2>&1
-log "DefectDojo containers started:"
-docker compose ps --format "table {{.Name}}\t{{.Status}}" 2>/dev/null || docker ps --filter "name=defectdojo" --format "table {{.Names}}\t{{.Status}}"
+log "Starting DefectDojo containers..."
+docker compose up -d --remove-orphans 2>&1 | tail -5
 
-log "Waiting for DefectDojo to become ready (port $DD_PORT)..."
-DD_RETRIES=0
-until curl -s -o /dev/null -w "%{http_code}" "http://localhost:${DD_PORT}" | grep -qE "200|302"; do
-    DD_RETRIES=$((DD_RETRIES + 1))
-    if [ "$DD_RETRIES" -ge 36 ]; then
-        log "WARNING: DefectDojo not responding after 3 min — check: docker compose -f $LAB_DIR/defectdojo/docker-compose.yml logs"
+log "Waiting for DefectDojo initializer to print admin password..."
+DD_PASS=""
+RETRIES=0
+until [ -n "$DD_PASS" ]; do
+    RETRIES=$((RETRIES + 1))
+    if [ "$RETRIES" -ge 60 ]; then
+        log "WARNING: could not extract DD password after 5 min"
+        DD_PASS="(check: cd $LAB_DIR/defectdojo && docker compose logs initializer | grep 'Admin password:')"
         break
     fi
-    printf "."
-    sleep 5
+    DD_PASS=$(docker compose logs initializer 2>/dev/null | grep "Admin password:" | tail -1 | awk '{print $NF}')
+    [ -n "$DD_PASS" ] || sleep 5
 done
-echo ""
-log "DefectDojo ready at http://localhost:${DD_PORT} (admin / superman)"
+log "DefectDojo password extracted"
+
+# Store for student reference
+echo "DD_USER=admin" > "$LAB_DIR/.dd-credentials"
+echo "DD_PASS=${DD_PASS}" >> "$LAB_DIR/.dd-credentials"
+chmod 600 "$LAB_DIR/.dd-credentials"
+log "Credentials saved to $LAB_DIR/.dd-credentials"
+
 cd "$SCRIPT_DIR"
 
 # -------------------------------------------------------------------------
@@ -418,8 +419,6 @@ HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
     -u "$JENKINS_USER:$JENKINS_API_TOKEN")
 log "Build queued: HTTP $HTTP"
 
-DD_PASS="superman"
-
 # -------------------------------------------------------------------------
 # Summary
 # -------------------------------------------------------------------------
@@ -430,9 +429,7 @@ echo "================================================================"
 echo ""
 echo "  Jenkins    : http://localhost:8090   admin / superman"
 echo "  Gitea      : http://localhost:3100   admin / superman"
-echo "  DefectDojo : http://localhost:${DD_PORT}   admin / (see below)"
-echo ""
-echo "  DefectDojo password: ${DD_PASS}"
+echo "  DefectDojo : http://localhost:${DD_PORT}   admin / ${DD_PASS}"
 echo ""
 echo "  Gitea repo : http://localhost:3100/admin/vulnerable-app"
 echo ""
