@@ -1,6 +1,6 @@
 #!/bin/bash
 # DevSecOps Lab — docker-compose setup: Jenkins + Gitea + DefectDojo
-# Configures webhooks and Jenkins jobs automatically.
+# Configures webhooks, Jenkins jobs, and Gitea project automatically.
 #
 # Usage:
 #   cd /home/ubuntu/workspace/devsecops/practical-security-engineering-app
@@ -9,16 +9,16 @@
 # Credentials after setup:
 #   Jenkins    : admin / superman  (http://localhost:8090)
 #   Gitea      : admin / superman  (http://localhost:3100)
-#   DefectDojo : admin / printed at end  (http://localhost:8181)
+#   DefectDojo : admin / see end of output (http://localhost:8181)
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+LAB_DIR="$HOME/devsecops-lab"
 JENKINS_URL="http://localhost:8090"
 GITEA_URL="http://localhost:3100"
 DD_PORT=8181
-LAB_DIR="$HOME/devsecops-lab"
 WEBHOOK_SECRET="lab-hook-2024"
 JENKINS_USER="admin"
 JENKINS_PASS="superman"
@@ -65,6 +65,8 @@ if [ -d "$LAB_DIR/defectdojo" ]; then
     cd "$LAB_DIR/defectdojo" && docker compose down --remove-orphans 2>/dev/null || true
     cd "$SCRIPT_DIR"
 fi
+
+mkdir -p "$LAB_DIR"
 
 # -------------------------------------------------------------------------
 # Build and start Jenkins + Gitea
@@ -364,19 +366,9 @@ HOOK_ID=$(echo "$HOOK_RESP" | python3 -c "import json,sys; print(json.load(sys.s
 log "Gitea webhook created — id=$HOOK_ID → http://${JENKINS_IP}:8080/generic-webhook-trigger/invoke?token=Jenkins-SAST"
 
 # -------------------------------------------------------------------------
-# Trigger initial SAST build
-# -------------------------------------------------------------------------
-log "Triggering initial Jenkins-SAST build..."
-HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
-    -X POST "$JENKINS_URL/job/Jenkins-SAST/build" \
-    -u "$JENKINS_USER:$JENKINS_API_TOKEN")
-log "Build queued: HTTP $HTTP"
-
-# -------------------------------------------------------------------------
 # Start DefectDojo
 # -------------------------------------------------------------------------
 log "Setting up DefectDojo on port $DD_PORT..."
-mkdir -p "$LAB_DIR"
 if [ ! -d "$LAB_DIR/defectdojo" ]; then
     git clone --depth=1 https://github.com/DefectDojo/django-DefectDojo \
         "$LAB_DIR/defectdojo"
@@ -388,6 +380,16 @@ cd "$LAB_DIR/defectdojo"
 docker compose up -d --remove-orphans 2>&1 | tail -5
 cd "$SCRIPT_DIR"
 
+# -------------------------------------------------------------------------
+# Trigger initial SAST build
+# -------------------------------------------------------------------------
+log "Triggering initial Jenkins-SAST build..."
+HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
+    -X POST "$JENKINS_URL/job/Jenkins-SAST/build" \
+    -u "$JENKINS_USER:$JENKINS_API_TOKEN")
+log "Build queued: HTTP $HTTP"
+
+# Get DefectDojo password
 DD_PASS=$(cd "$LAB_DIR/defectdojo" && \
     docker compose logs initializer 2>/dev/null | grep -i "admin password" | tail -1 \
     || echo "(run: cd $LAB_DIR/defectdojo && docker compose logs initializer | grep -i password)")
@@ -414,5 +416,5 @@ echo "    Jenkins-DAST : http://localhost:8090/job/Jenkins-DAST/"
 echo ""
 echo "  Webhook: git push → Gitea → Jenkins-SAST (auto-triggered)"
 echo ""
-echo "  Note: DefectDojo takes 3-5 min to fully initialise."
+echo "  Note: DefectDojo takes 3-5 min to fully start."
 echo "================================================================"
