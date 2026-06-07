@@ -10,11 +10,11 @@ JSON_OUT="$WORKSPACE/bandit-results.json"
 HTML_OUT="$WORKSPACE/bandit-results.html"
 
 echo "--- Installing bandit ---"
-pip install bandit --quiet
+pip install bandit --quiet --break-system-packages
 
 echo "--- Running SAST scan on $TARGET ---"
-bandit -r "$TARGET" -f json  -o "$JSON_OUT"  || true
-bandit -r "$TARGET" -f html  -o "$HTML_OUT"  || true
+python3 -m bandit -r "$TARGET" -f json  -o "$JSON_OUT"  || true
+python3 -m bandit -r "$TARGET" -f html  -o "$HTML_OUT"  || true
 
 echo "--- Finding summary ---"
 python3 - <<'EOF'
