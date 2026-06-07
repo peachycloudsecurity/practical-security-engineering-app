@@ -379,6 +379,7 @@ if [ ! -d "$LAB_DIR/defectdojo" ]; then
 fi
 cat > "$LAB_DIR/defectdojo/.env" << EOF
 DD_PORT=${DD_PORT}
+DD_ADMIN_PASSWORD=superman
 EOF
 cd "$LAB_DIR/defectdojo"
 docker compose up -d --remove-orphans 2>&1 | tail -5
