@@ -1,0 +1,47 @@
+services:
+  jenkins:
+    build:
+      context: .
+      dockerfile: Dockerfile.jenkins
+    container_name: lab-jenkins
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+      - "50000:50000"
+    volumes:
+      - jenkins_data:/var/jenkins_home
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - lab-net
+
+  gitlab:
+    image: gitlab/gitlab-ce:17.11.1-ce.0
+    container_name: lab-gitlab
+    restart: unless-stopped
+    ports:
+      - "8929:80"
+      - "2289:22"
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://localhost:8929'
+        gitlab_rails['initial_root_password'] = 'superman'
+        gitlab_rails['gitlab_signup_enabled'] = false
+        gitlab_rails['allow_local_requests_from_web_hooks_and_services'] = true
+        nginx['listen_port'] = 80
+    volumes:
+      - gitlab_config:/etc/gitlab
+      - gitlab_logs:/var/log/gitlab
+      - gitlab_data:/var/opt/gitlab
+    networks:
+      - lab-net
+    shm_size: 256m
+
+networks:
+  lab-net:
+    driver: bridge
+
+volumes:
+  jenkins_data:
+  gitlab_config:
+  gitlab_logs:
+  gitlab_data:
