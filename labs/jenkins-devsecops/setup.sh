@@ -7,7 +7,7 @@
 #   bash labs/jenkins-devsecops/setup.sh
 #
 # Credentials after setup:
-#   Jenkins    : admin / superman          (http://localhost:8080)
+#   Jenkins    : admin / superman          (http://localhost:8090)
 #   GitLab     : root  / Supercomplex@123# (http://localhost:8929)
 #   DefectDojo : admin / see end of output (http://localhost:8181)
 
@@ -16,7 +16,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 LAB_DIR="$HOME/devsecops-lab"
-JENKINS_URL="http://localhost:8080"
+JENKINS_URL="http://localhost:8090"
 GITLAB_URL="http://localhost:8929"
 DD_PORT=8181
 WEBHOOK_SECRET="lab-hook-2024"
@@ -454,7 +454,7 @@ log "Initial build triggered: HTTP $HTTP (201=queued)"
 # -------------------------------------------------------------------------
 log "Testing webhook endpoint (expect HTTP 200)..."
 WH_HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
-    -X POST "http://localhost:8080/project/Jenkins-SAST" \
+    -X POST "http://localhost:8090/project/Jenkins-SAST" \
     -H "X-Gitlab-Token: ${WEBHOOK_SECRET}" \
     -H "X-Gitlab-Event: Push Hook" \
     -H "Content-Type: application/json" \
@@ -474,7 +474,7 @@ echo "================================================================"
 echo "  DevSecOps Lab — Ready"
 echo "================================================================"
 echo ""
-echo "  Jenkins    : http://localhost:8080   admin / superman"
+echo "  Jenkins    : http://localhost:8090   admin / superman"
 echo "  GitLab     : http://localhost:8929   root  / Supercomplex@123#"
 echo "  DefectDojo : http://localhost:${DD_PORT}   admin / (see below)"
 echo ""
@@ -484,8 +484,8 @@ echo "  GitLab project : http://localhost:8929/root/vulnerable-app"
 echo "  Webhook secret : ${WEBHOOK_SECRET}"
 echo ""
 echo "  Jenkins jobs:"
-echo "    Jenkins-SAST : http://localhost:8080/job/Jenkins-SAST/"
-echo "    Jenkins-DAST : http://localhost:8080/job/Jenkins-DAST/"
+echo "    Jenkins-SAST : http://localhost:8090/job/Jenkins-SAST/"
+echo "    Jenkins-DAST : http://localhost:8090/job/Jenkins-DAST/"
 echo ""
 echo "  Webhook flow:"
 echo "    git push → GitLab → Jenkins-SAST (auto-triggered)"
