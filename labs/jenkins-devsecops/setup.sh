@@ -1,24 +1,21 @@
 #!/bin/bash
-# DevSecOps Lab — docker-compose setup: Jenkins + Gitea + DefectDojo
-# Configures webhooks, Jenkins jobs, and Gitea project automatically.
+# DevSecOps Lab — docker-compose setup: Jenkins + Gitea
+# Configures webhooks and Jenkins jobs automatically.
 #
 # Usage:
 #   cd /home/ubuntu/workspace/devsecops/practical-security-engineering-app
 #   bash labs/jenkins-devsecops/setup.sh
 #
 # Credentials after setup:
-#   Jenkins    : admin / superman  (http://localhost:8090)
-#   Gitea      : admin / superman  (http://localhost:3100)
-#   DefectDojo : admin / see end of output (http://localhost:8181)
+#   Jenkins : admin / superman  (http://localhost:8090)
+#   Gitea   : admin / superman  (http://localhost:3100)
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-LAB_DIR="$HOME/devsecops-lab"
 JENKINS_URL="http://localhost:8090"
 GITEA_URL="http://localhost:3100"
-DD_PORT=8181
 WEBHOOK_SECRET="lab-hook-2024"
 JENKINS_USER="admin"
 JENKINS_PASS="superman"
@@ -59,14 +56,6 @@ docker compose down --remove-orphans 2>/dev/null || true
 docker rm -f lab-vuln-app lab-zap-run 2>/dev/null || true
 docker volume rm jenkins-devsecops_jenkins_data \
     jenkins-devsecops_gitea_data 2>/dev/null || true
-
-if [ -d "$LAB_DIR/defectdojo" ]; then
-    log "Stopping previous DefectDojo stack..."
-    cd "$LAB_DIR/defectdojo" && docker compose down --remove-orphans 2>/dev/null || true
-    cd "$SCRIPT_DIR"
-fi
-
-mkdir -p "$LAB_DIR"
 
 # -------------------------------------------------------------------------
 # Build and start Jenkins + Gitea
@@ -366,21 +355,6 @@ HOOK_ID=$(echo "$HOOK_RESP" | python3 -c "import json,sys; print(json.load(sys.s
 log "Gitea webhook created — id=$HOOK_ID → http://${JENKINS_IP}:8080/generic-webhook-trigger/invoke?token=Jenkins-SAST"
 
 # -------------------------------------------------------------------------
-# Start DefectDojo
-# -------------------------------------------------------------------------
-log "Setting up DefectDojo on port $DD_PORT..."
-if [ ! -d "$LAB_DIR/defectdojo" ]; then
-    git clone --depth=1 https://github.com/DefectDojo/django-DefectDojo \
-        "$LAB_DIR/defectdojo"
-fi
-cat > "$LAB_DIR/defectdojo/.env" << EOF
-DD_PORT=${DD_PORT}
-EOF
-cd "$LAB_DIR/defectdojo"
-docker compose up -d --remove-orphans 2>&1 | tail -5
-cd "$SCRIPT_DIR"
-
-# -------------------------------------------------------------------------
 # Trigger initial SAST build
 # -------------------------------------------------------------------------
 log "Triggering initial Jenkins-SAST build..."
@@ -388,11 +362,6 @@ HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
     -X POST "$JENKINS_URL/job/Jenkins-SAST/build" \
     -u "$JENKINS_USER:$JENKINS_API_TOKEN")
 log "Build queued: HTTP $HTTP"
-
-# Get DefectDojo password
-DD_PASS=$(cd "$LAB_DIR/defectdojo" && \
-    docker compose logs initializer 2>/dev/null | grep -i "admin password" | tail -1 \
-    || echo "(run: cd $LAB_DIR/defectdojo && docker compose logs initializer | grep -i password)")
 
 # -------------------------------------------------------------------------
 # Summary
@@ -402,11 +371,8 @@ echo "================================================================"
 echo "  DevSecOps Lab — Ready"
 echo "================================================================"
 echo ""
-echo "  Jenkins    : http://localhost:8090   admin / superman"
-echo "  Gitea      : http://localhost:3100   admin / superman"
-echo "  DefectDojo : http://localhost:${DD_PORT}   admin / (see below)"
-echo ""
-echo "  DefectDojo password: ${DD_PASS}"
+echo "  Jenkins : http://localhost:8090   admin / superman"
+echo "  Gitea   : http://localhost:3100   admin / superman"
 echo ""
 echo "  Gitea repo : http://localhost:3100/admin/vulnerable-app"
 echo ""
@@ -415,6 +381,4 @@ echo "    Jenkins-SAST : http://localhost:8090/job/Jenkins-SAST/"
 echo "    Jenkins-DAST : http://localhost:8090/job/Jenkins-DAST/"
 echo ""
 echo "  Webhook: git push → Gitea → Jenkins-SAST (auto-triggered)"
-echo ""
-echo "  Note: DefectDojo takes 3-5 min to fully start."
 echo "================================================================"
