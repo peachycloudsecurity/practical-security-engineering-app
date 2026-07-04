@@ -115,15 +115,17 @@ jobs:
       - name: Audit dependencies
         working-directory: labs/github-actions-devsecops
         run: |
-          pip install -r requirements.txt --quiet
           pip-audit -r requirements.txt -f json -o pip-audit.json || true
       - name: Convert to SARIF
         working-directory: labs/github-actions-devsecops
         run: |
           python3 - <<'EOF'
-          import json, sys
-          with open("pip-audit.json") as f:
-              data = json.load(f)
+          import json, os
+          if not os.path.exists("pip-audit.json"):
+              data = {"dependencies": []}
+          else:
+              with open("pip-audit.json") as f:
+                  data = json.load(f)
           results = []
           rules = {}
           for dep in data.get("dependencies", []):
@@ -147,6 +149,9 @@ jobs:
           sarif_file: labs/github-actions-devsecops/pip-audit.sarif
           category: lab-pip-audit
         continue-on-error: true
+      - name: Fail on vulnerabilities
+        working-directory: labs/github-actions-devsecops
+        run: pip-audit -r requirements.txt
 
   bandit:
     name: "SAST — bandit (Python static analysis)"
@@ -376,6 +381,9 @@ jobs:
       - license-check
     if: always()
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
     steps:
       - name: Write summary table
         run: |
