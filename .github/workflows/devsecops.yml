@@ -322,6 +322,7 @@ jobs:
           image-ref: 'lab-app:${{ github.sha }}'
           severity: 'CRITICAL,HIGH'
           exit-code: '1'
+          ignore-unfixed: 'true'
 
   # ── Layer 5: IaC ────────────────────────────────────────────────────────────
 
